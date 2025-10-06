@@ -1,0 +1,631 @@
+﻿<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Карта объектов</title>
+    <link rel="stylesheet" href="/static/maplibre/maplibre-gl.css">
+    <script src="/static/maplibre/maplibre-gl.js"></script>
+
+    <style>
+        body {
+            margin: 0;
+            font-family: Arial, sans-serif;
+        }
+
+        .header {
+            background: #333;
+            color: white;
+            padding: 1rem;
+            text-align: center;
+        }
+
+        .controls {
+            padding: 1rem;
+            background: #f5f5f5;
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            flex-wrap: wrap;
+            justify-content: center;
+        }
+
+        .status-info {
+            text-align: center;
+            padding: 0.5rem;
+            background: #e9ecef;
+            font-weight: bold;
+        }
+
+        #map {
+            width: 100%;
+            height: 600px;
+        }
+
+        .stats-panel {
+            position: absolute;
+            top: 100px;
+            right: 10px;
+            background: white;
+            padding: 15px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.2);
+            min-width: 200px;
+            z-index: 1000;
+        }
+
+        .stats-item {
+            margin: 8px 0;
+            padding: 5px;
+            border-left: 4px solid #007bff;
+            background: #f8f9fa;
+        }
+
+        .district-stats {
+            margin-top: 10px;
+            font-size: 12px;
+        }
+
+        input, button {
+            padding: 8px 12px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+        }
+
+        input {
+            width: 250px;
+        }
+
+        button {
+            background: #007bff;
+            color: white;
+            cursor: pointer;
+            border: none;
+        }
+
+            button:hover {
+                background: #0056b3;
+            }
+
+            button.active {
+                background: #28a745;
+            }
+
+        .custom-marker {
+            pointer-events: auto;
+        }
+
+        /* Стили для районов на карте */
+        .district-label {
+            background: rgba(255, 255, 255, 0.95);
+            border: 2px solid;
+            border-radius: 8px;
+            padding: 8px 12px;
+            font-size: 12px;
+            font-weight: bold;
+            text-align: center;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+            pointer-events: none;
+            backdrop-filter: blur(2px);
+        }
+
+        .district-good {
+            border-color: #28a745;
+            color: #28a745;
+            background: rgba(40, 167, 69, 0.1);
+        }
+
+        .district-medium {
+            border-color: #ffc107;
+            color: #ffc107;
+            background: rgba(255, 193, 7, 0.1);
+        }
+
+        .district-bad {
+            border-color: #dc3545;
+            color: #dc3545;
+            background: rgba(220, 53, 69, 0.1);
+        }
+
+        /* Стили для автодополнения */
+        .search-container {
+            position: relative;
+            display: inline-block;
+        }
+
+        .autocomplete-items {
+            position: absolute;
+            border: 1px solid #ddd;
+            border-top: none;
+            z-index: 99;
+            top: 100%;
+            left: 0;
+            right: 0;
+            background: white;
+            max-height: 200px;
+            overflow-y: auto;
+            border-radius: 0 0 4px 4px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+
+        .autocomplete-item {
+            padding: 10px;
+            cursor: pointer;
+            border-bottom: 1px solid #f1f1f1;
+            font-size: 14px;
+        }
+
+            .autocomplete-item:hover {
+                background-color: #f8f9fa;
+            }
+
+            .autocomplete-item:last-child {
+                border-bottom: none;
+            }
+
+        .object-status {
+            font-size: 12px;
+            color: #666;
+            margin-left: 8px;
+        }
+
+            .object-status.working {
+                color: #28a745;
+            }
+
+            .object-status.broken {
+                color: #dc3545;
+            }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <div style="display: flex; align-items: center; justify-content: center; gap: 20px; position: relative;">
+            <a href="{{ url_for('index') }}"
+               style="color: white; text-decoration: none; font-size: 16px; padding: 8px 15px; border: 1px solid rgba(255,255,255,0.3); border-radius: 6px; transition: all 0.3s ease; position: absolute; left: 20px; display: flex; align-items: center; gap: 5px;"
+               onmouseover="this.style.background='rgba(255,255,255,0.1)'; this.style.borderColor='white'"
+               onmouseout="this.style.background='transparent'; this.style.borderColor='rgba(255,255,255,0.3)'">
+                🏠 Главная
+            </a>
+            <h1>Карта объектов организации</h1>
+        </div>
+    </div>
+
+    <div class="status-info">
+        <span style="color: green;">●</span> Работает
+        <span style="color: red; margin-left: 15px;">●</span> Не работает
+        <span id="statusText" style="margin-left: 20px;">Загрузка...</span>
+    </div>
+
+    <div class="controls">
+        <div class="search-container">
+            <input type="text" id="searchInput" placeholder="Введите название объекта..." autocomplete="off">
+            <div id="autocompleteList" class="autocomplete-items" style="display: none;"></div>
+        </div>
+        <button onclick="filterObjects()">Найти</button>
+        <button onclick="showAllObjects()">Все объекты</button>
+        <button onclick="showWorking()">Только рабочие</button>
+        <button onclick="showBroken()">Только нерабочие</button>
+        <button onclick="toggleStats()" id="statsToggle">Показать статистику</button>
+        <button onclick="toggleDistricts()" id="districtsToggle">Скрыть районы</button>
+    </div>
+
+    <div id="map"></div>
+    <div id="statsPanel" class="stats-panel" style="display: none;">
+        <h3 style="margin-top: 0;">Статистика</h3>
+        <div id="globalStats"></div>
+        <div id="districtStats" class="district-stats"></div>
+    </div>
+
+    <script>
+        const TILESERVER_URL = 'http://192.168.51.139:8080';
+
+        let map;
+        let allMarkers = [];
+        let districtMarkers = [];
+        let objectsData = [];
+        let currentFilter = 'all';
+        let statsVisible = false;
+        let districtsVisible = true;
+        let currentZoom = 10;
+
+        // Районы с вашими координатами
+        const districts = [
+            {
+                name: "Шуист",
+                center: [45.045701, 53.218150],
+                bounds: [[45.025239, 53.210126], [45.073258, 53.229320]]
+            },
+            {
+                name: "ГПЗ",
+                center: [45.050808, 53.183672],
+                bounds: [[45.031824, 53.167076], [45.074378, 53.198532]]
+            }
+        ];
+
+        function initMap() {
+            map = new maplibregl.Map({
+                container: 'map',
+                style: TILESERVER_URL + '/styles/basic-preview/style.json',
+                center: [45.045701, 53.218150],
+                zoom: 11,
+                localIdeograph: true
+            });
+
+            map.addControl(new maplibregl.NavigationControl());
+
+            map.on('load', () => {
+                document.getElementById('statusText').textContent = 'Карта загружена';
+                loadObjects();
+                setupSearch();
+                setInterval(loadObjects, 30000);
+            });
+
+            map.on('zoomend', () => {
+                currentZoom = map.getZoom();
+                updateMarkers();
+                updateDistrictMarkers();
+            });
+
+            map.on('moveend', () => {
+                updateStats();
+                updateDistrictMarkers();
+            });
+        }
+
+        function loadObjects() {
+            document.getElementById('statusText').textContent = 'Загрузка объектов...';
+
+            fetch('/map/api/objects')
+                .then(response => response.json())
+                .then(data => {
+                    objectsData = data;
+                    updateMarkers();
+                    updateDistrictMarkers();
+                    updateStats();
+                    document.getElementById('statusText').textContent = `Объектов: ${data.length}`;
+                })
+                .catch(error => {
+                    console.error('Ошибка загрузки объектов:', error);
+                    document.getElementById('statusText').textContent = 'Ошибка загрузки данных';
+                });
+        }
+
+        function setupSearch() {
+            const searchInput = document.getElementById('searchInput');
+            const autocompleteList = document.getElementById('autocompleteList');
+
+            searchInput.addEventListener('input', function () {
+                const searchText = this.value.toLowerCase().trim();
+                autocompleteList.innerHTML = '';
+
+                if (searchText.length < 2) {
+                    autocompleteList.style.display = 'none';
+                    return;
+                }
+
+                const matches = objectsData.filter(obj =>
+                    obj.name.toLowerCase().includes(searchText)
+                ).slice(0, 10); // Ограничиваем 10 результатами
+
+                if (matches.length > 0) {
+                    matches.forEach(obj => {
+                        const item = document.createElement('div');
+                        item.className = 'autocomplete-item';
+                        item.innerHTML = `
+                                ${obj.name}
+                                <span class="object-status ${obj.status}">
+                                    ${obj.status === 'works' ? '✓ Работает' : '✗ Не работает'}
+                                </span>
+                            `;
+                        item.addEventListener('click', function () {
+                            searchInput.value = obj.name;
+                            autocompleteList.style.display = 'none';
+                            filterObjects();
+                            // Центрируем карту на выбранном объекте
+                            map.flyTo({
+                                center: [obj.lon, obj.lat],
+                                zoom: 15
+                            });
+                        });
+                        autocompleteList.appendChild(item);
+                    });
+                    autocompleteList.style.display = 'block';
+                } else {
+                    autocompleteList.style.display = 'none';
+                }
+            });
+
+            // Скрываем список при клике вне поля поиска
+            document.addEventListener('click', function (e) {
+                if (!searchInput.contains(e.target) && !autocompleteList.contains(e.target)) {
+                    autocompleteList.style.display = 'none';
+                }
+            });
+
+            // Обработка клавиши Enter
+            searchInput.addEventListener('keypress', function (e) {
+                if (e.key === 'Enter') {
+                    filterObjects();
+                    autocompleteList.style.display = 'none';
+                }
+            });
+        }
+
+        function updateMarkers() {
+            allMarkers.forEach(marker => marker.remove());
+            allMarkers = [];
+
+            const filteredData = getFilteredData();
+            const showMarkers = currentZoom > 12;
+
+            filteredData.forEach(obj => {
+                const color = obj.status === 'works' ? '#28a745' : '#dc3545';
+                const statusText = obj.status === 'works' ? '✓' : '✗';
+
+                const el = document.createElement('div');
+                el.className = 'custom-marker';
+
+                if (showMarkers) {
+                    el.style.cssText = `
+                            background: ${color};
+                            color: white;
+                            border: 2px solid white;
+                            border-radius: 12px;
+                            padding: 2px 6px;
+                            font-size: 10px;
+                            font-weight: bold;
+                            text-align: center;
+                            box-shadow: 0 1px 4px rgba(0,0,0,0.3);
+                            white-space: nowrap;
+                            cursor: pointer;
+                            max-width: 50px;
+                            overflow: hidden;
+                            text-overflow: ellipsis;
+                            line-height: 1.2;
+                        `;
+
+                    let displayText = obj.name.length > 6 ? obj.name.substring(0, 6) + '..' : obj.name;
+                    el.innerHTML = `
+                            <div style="display: flex; align-items: center; justify-content: center; gap: 2px;">
+                                <span style="font-size: 9px;">${statusText}</span>
+                                <span>${displayText}</span>
+                            </div>
+                        `;
+                } else {
+                    el.style.cssText = `
+                            background: ${color};
+                            width: 8px;
+                            height: 8px;
+                            border: 2px solid white;
+                            border-radius: 50%;
+                            box-shadow: 0 1px 4px rgba(0,0,0,0.3);
+                            cursor: pointer;
+                        `;
+                }
+
+                const popup = new maplibregl.Popup({
+                    offset: 15,
+                    closeButton: true
+                }).setHTML(`
+                        <div style="padding: 8px; min-width: 180px;">
+                            <h3 style="margin: 0 0 6px 0; font-size: 14px;">${obj.name}</h3>
+                            <p style="margin: 0 0 4px 0; font-size: 12px;">
+                                <strong>Статус:</strong>
+                                <span style="color: ${color}; font-weight: bold;">
+                                    ${obj.status === 'works' ? '✓ Работает' : '✗ Не работает'}
+                                </span>
+                            </p>
+                        </div>
+                    `);
+
+                const marker = new maplibregl.Marker({
+                    element: el,
+                    anchor: 'bottom'
+                })
+                    .setLngLat([obj.lon, obj.lat])
+                    .setPopup(popup)
+                    .addTo(map);
+
+                allMarkers.push(marker);
+            });
+        }
+
+        function updateDistrictMarkers() {
+            districtMarkers.forEach(marker => marker.remove());
+            districtMarkers = [];
+
+            if (!districtsVisible) return;
+
+            const filteredData = getFilteredData();
+            const showDistrictLabels = currentZoom <= 12;
+
+            districts.forEach(district => {
+                const districtObjects = filteredData.filter(obj => {
+                    const [lon, lat] = [obj.lon, obj.lat];
+                    return lon >= district.bounds[0][0] && lon <= district.bounds[1][0] &&
+                        lat >= district.bounds[0][1] && lat <= district.bounds[1][1];
+                });
+
+                if (districtObjects.length > 0 && showDistrictLabels) {
+                    const working = districtObjects.filter(obj => obj.status === 'works').length;
+                    const total = districtObjects.length;
+                    const percentage = Math.round((working / total) * 100);
+
+                    let districtClass = 'district-bad';
+                    if (percentage >= 80) districtClass = 'district-good';
+                    else if (percentage >= 50) districtClass = 'district-medium';
+
+                    const el = document.createElement('div');
+                    el.className = `district-label ${districtClass}`;
+                    el.innerHTML = `
+                            <div style="font-size: 11px; font-weight: bold;">${district.name}</div>
+                            <div style="font-size: 10px; margin-top: 3px;">
+                                <strong>${percentage}%</strong> исправно<br>
+                                <span style="font-size: 9px;">(${working}/${total} объектов)</span>
+                            </div>
+                        `;
+
+                    const marker = new maplibregl.Marker({
+                        element: el,
+                        anchor: 'center'
+                    })
+                        .setLngLat(district.center)
+                        .addTo(map);
+
+                    districtMarkers.push(marker);
+                }
+            });
+        }
+
+        function updateStats() {
+            const filteredData = getFilteredData();
+            const bounds = map.getBounds();
+
+            const visibleObjects = filteredData.filter(obj => {
+                const [lon, lat] = [obj.lon, obj.lat];
+                return bounds.contains([lon, lat]);
+            });
+
+            const working = visibleObjects.filter(obj => obj.status === 'works').length;
+            const broken = visibleObjects.filter(obj => obj.status === 'broken').length;
+            const total = visibleObjects.length;
+
+            let districtHTML = '<strong>Статистика по районам:</strong><br>';
+            districts.forEach(district => {
+                const inDistrict = filteredData.filter(obj => {
+                    const [lon, lat] = [obj.lon, obj.lat];
+                    return lon >= district.bounds[0][0] && lon <= district.bounds[1][0] &&
+                        lat >= district.bounds[0][1] && lat <= district.bounds[1][1];
+                });
+
+                if (inDistrict.length > 0) {
+                    const districtWorking = inDistrict.filter(obj => obj.status === 'works').length;
+                    const districtBroken = inDistrict.filter(obj => obj.status === 'broken').length;
+                    const percentage = Math.round((districtWorking / inDistrict.length) * 100);
+
+                    districtHTML += `
+                            <div style="margin: 5px 0; padding: 3px; border-left: 3px solid #007bff; background: #f8f9fa;">
+                                <strong>${district.name}:</strong> ${inDistrict.length} объектов<br>
+                                <span style="color:green">✓ ${districtWorking} раб.</span> |
+                                <span style="color:red">✗ ${districtBroken} нераб.</span><br>
+                                Исправность: <strong>${percentage}%</strong>
+                            </div>
+                        `;
+                } else {
+                    districtHTML += `
+                            <div style="margin: 5px 0; padding: 3px; border-left: 3px solid #6c757d; background: #f8f9fa;">
+                                <strong>${district.name}:</strong> нет объектов
+                            </div>
+                        `;
+                }
+            });
+
+            document.getElementById('globalStats').innerHTML = `
+                    <div class="stats-item">
+                        <strong>Видимая область карты:</strong><br>
+                        Всего объектов: <strong>${total}</strong><br>
+                        <span style="color:green">Работает: ${working}</span><br>
+                        <span style="color:red">Не работает: ${broken}</span><br>
+                        Общая исправность: <strong>${total > 0 ? Math.round((working / total) * 100) : 0}%</strong>
+                    </div>
+                `;
+
+            document.getElementById('districtStats').innerHTML = districtHTML;
+        }
+
+        function toggleDistricts() {
+            districtsVisible = !districtsVisible;
+            const button = document.getElementById('districtsToggle');
+
+            if (districtsVisible) {
+                button.textContent = 'Скрыть районы';
+                button.classList.add('active');
+            } else {
+                button.textContent = 'Показать районы';
+                button.classList.remove('active');
+            }
+
+            updateDistrictMarkers();
+        }
+
+        function toggleStats() {
+            statsVisible = !statsVisible;
+            const button = document.getElementById('statsToggle');
+            const panel = document.getElementById('statsPanel');
+
+            if (statsVisible) {
+                button.textContent = 'Скрыть статистику';
+                button.classList.add('active');
+                panel.style.display = 'block';
+                updateStats();
+            } else {
+                button.textContent = 'Показать статистику';
+                button.classList.remove('active');
+                panel.style.display = 'none';
+            }
+        }
+
+        function getFilteredData() {
+            switch (currentFilter) {
+                case 'works': return objectsData.filter(obj => obj.status === 'works');
+                case 'broken': return objectsData.filter(obj => obj.status === 'broken');
+                case 'search':
+                    const searchText = document.getElementById('searchInput').value.toLowerCase().trim();
+                    return objectsData.filter(obj => obj.name.toLowerCase().includes(searchText));
+                default: return objectsData;
+            }
+        }
+
+        function filterObjects() {
+            const searchText = document.getElementById('searchInput').value.toLowerCase().trim();
+            currentFilter = searchText === '' ? 'all' : 'search';
+            updateMarkers();
+            updateDistrictMarkers();
+            updateStats();
+            updateStatus();
+        }
+
+        function showAllObjects() {
+            currentFilter = 'all';
+            document.getElementById('searchInput').value = '';
+            updateMarkers();
+            updateDistrictMarkers();
+            updateStats();
+            updateStatus();
+        }
+        function showWorking() {
+            currentFilter = 'works';
+            updateMarkers();
+            updateDistrictMarkers();
+            updateStats();
+            updateStatus();
+        }
+        function showBroken() {
+            currentFilter = 'broken';
+            updateMarkers();
+            updateDistrictMarkers();
+            updateStats();
+            updateStatus();
+        }
+
+        function updateStatus() {
+            const filteredData = getFilteredData();
+            let status = '';
+            switch (currentFilter) {
+                case 'search': status = `Найдено: ${filteredData.length}`; break;
+                case 'works': status = `Рабочие: ${filteredData.length}`; break;
+                case 'broken': status = `Не рабочие: ${filteredData.length}`; break;
+                default: status = `Все объекты: ${objectsData.length}`;
+            }
+            document.getElementById('statusText').textContent = status;
+        }
+
+        document.addEventListener('DOMContentLoaded', function () {
+            if (typeof maplibregl !== 'undefined') {
+                initMap();
+            }
+        });
+    </script>
+</body>
+</html>

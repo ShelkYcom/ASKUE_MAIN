@@ -1,0 +1,467 @@
+﻿{% extends "base.html" %}
+
+{% block title %}Карта объектов - {{ super() }}{% endblock %}
+
+{% block content %}
+<div class="module-header">
+    <h1>Карта объектов организации</h1>
+    <p>Интерактивная карта с объектами и их статусами</p>
+</div>
+
+<div class="search-container">
+    <input type="text" id="searchInput" placeholder="Введите название объекта...">
+    <div id="suggestions"></div>
+    <button onclick="filterObjects()">Найти</button>
+    <button onclick="showAllObjects()">Показать все</button>
+    <button onclick="showWorking()">Только рабочие</button>
+    <button onclick="showBroken()">Только нерабочие</button>
+    <button onclick="toggleLabels()" id="labelsToggle">Скрыть подписи</button>
+</div>
+
+<div class="status-info">
+    <span style="color: green;">●</span> Работает
+    <span style="color: red; margin-left: 15px;">●</span> Не работает
+    <span id="statusText" style="margin-left: 20px; font-weight: bold;"></span>
+</div>
+
+<div id="resultsContainer" class="results-list" style="display: none;">
+    <h3>Найденные объекты:</h3>
+    <div id="resultsList"></div>
+</div>
+
+<div id="map"></div>
+
+<!-- Подключаем API 2GIS -->
+<script src="https://maps.api.2gis.ru/2.0/loader.js?pkg=full&lazy=true"></script>
+
+<style>
+    #map {
+        width: 100%;
+        height: 600px;
+        border: 2px solid #ccc;
+        border-radius: 8px;
+        margin-top: 20px;
+    }
+
+    .custom-label {
+        background: rgba(255, 255, 255, 0.95);
+        padding: 4px 8px;
+        border: 1px solid #ccc;
+        border-radius: 4px;
+        font-size: 12px;
+        font-weight: bold;
+        white-space: nowrap;
+        max-width: 150px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+    }
+
+    .label-works {
+        color: #155724;
+        border-color: #c3e6cb;
+    }
+
+    .label-broken {
+        color: #721c24;
+        border-color: #f5c6cb;
+    }
+</style>
+
+<script type="text/javascript">
+    // ==== ВСТАВЬ СВОЙ API КЛЮЧ 2GIS ЗДЕСЬ ====
+    const DG_API_KEY = 'a85f4b43-459c-47d9-b01b-c3322630e1f4';
+    // =========================================
+
+    let map;
+    let allMarkers = [];
+    let allLabels = [];
+    let currentFilter = 'all';
+    let labelsVisible = true;
+
+    // Инициализация карты 2GIS
+    DG.then(function () {
+        // Устанавливаем API ключ
+        if (DG_API_KEY && DG_API_KEY !== 'a85f4b43-459c-47d9-b01b-c3322630e1f4') {
+            DG.config({
+                apiKey: DG_API_KEY
+            });
+            console.log('API ключ 2GIS установлен');
+        } else {
+            console.warn('API ключ 2GIS не установлен, используем демо-режим');
+        }
+
+        // Создаем карту
+        map = DG.map('map', {
+            center: [53.186031, 45.041080],
+            zoom: 10
+        });
+
+        // Загружаем данные при старте
+        fetchData();
+
+        // Автообновление каждые 60 секунд
+        setInterval(fetchData, 60000);
+
+        // Обработчики для поиска
+        setupSearchHandlers();
+
+        console.log('Карта 2GIS загружена успешно');
+    }).catch(function(error) {
+        console.error('Ошибка загрузки 2GIS:', error);
+        document.getElementById('map').innerHTML = `
+            <div style="text-align: center; padding: 50px; color: #666;">
+                <h3>Не удалось загрузить карту 2GIS</h3>
+                <p>Ошибка: ${error.message}</p>
+                <p>Проверьте API ключ: ${DG_API_KEY ? 'установлен' : 'не установлен'}</p>
+                <button onclick="location.reload()">Перезагрузить</button>
+            </div>
+        `;
+    });
+
+
+    // Переключение подписей
+    function toggleLabels() {
+        labelsVisible = !labelsVisible;
+        const button = document.getElementById('labelsToggle');
+
+        if (labelsVisible) {
+            button.textContent = 'Скрыть подписи';
+            button.style.background = '#007bff';
+            showLabels();
+        } else {
+            button.textContent = 'Показать подписи';
+            button.style.background = '#6c757d';
+            hideLabels();
+        }
+    }
+
+    // Показать подписи
+    function showLabels() {
+        allLabels.forEach(label => {
+            if (label && !map.hasLayer(label)) {
+                label.addTo(map);
+            }
+        });
+    }
+
+    // Скрыть подписи
+    function hideLabels() {
+        allLabels.forEach(label => {
+            if (label && map.hasLayer(label)) {
+                map.removeLayer(label);
+            }
+        });
+    }
+
+    // Создание метки
+    function createMarker(obj) {
+        // Создаем цветную иконку в зависимости от статуса
+        const iconUrl = obj.status === 'works'
+            ? 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20"><circle cx="10" cy="10" r="8" fill="green" stroke="white" stroke-width="2"/></svg>'
+            : 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20"><circle cx="10" cy="10" r="8" fill="red" stroke="white" stroke-width="2"/></svg>';
+
+        const icon = DG.icon({
+            iconUrl: iconUrl,
+            iconSize: [20, 20],
+            iconAnchor: [10, 10]
+        });
+
+        // Создаем метку
+        const marker = DG.marker([obj.lat, obj.lon], {
+            icon: icon
+        });
+
+        // Добавляем всплывающее окно
+        marker.bindPopup(`
+            <div style="padding: 10px; max-width: 250px;">
+                <b>${obj.name}</b><br>
+                Статус: <span style="color: ${obj.status === 'works' ? 'green' : 'red'};">${obj.status === 'works' ? 'Работает' : 'Не работает'}</span><br>
+                Координаты: ${obj.lat.toFixed(6)}, ${obj.lon.toFixed(6)}
+            </div>
+        `);
+
+        // Создаем подпись
+        const label = DG.marker([obj.lat + 0.0003, obj.lon], {
+            icon: DG.divIcon({
+                html: `<div class="custom-label ${obj.status === 'works' ? 'label-works' : 'label-broken'}">${obj.name}</div>`,
+                className: 'label-icon',
+                iconSize: [150, 30],
+                iconAnchor: [75, 15]
+            })
+        });
+
+        // Сохраняем данные объекта
+        marker.objData = obj;
+        label.objData = obj;
+
+        return { marker, label };
+    }
+
+    // Настройка обработчиков поиска
+    function setupSearchHandlers() {
+        const searchInput = document.getElementById('searchInput');
+        const suggestions = document.getElementById('suggestions');
+
+        searchInput.addEventListener('input', function () {
+            const searchText = this.value.toLowerCase().trim();
+            showSuggestions(searchText);
+        });
+
+        document.addEventListener('click', function (e) {
+            if (!searchInput.contains(e.target) && !suggestions.contains(e.target)) {
+                suggestions.style.display = 'none';
+            }
+        });
+
+        searchInput.addEventListener('keypress', function (e) {
+            if (e.key === 'Enter') {
+                filterObjects();
+                suggestions.style.display = 'none';
+            }
+        });
+    }
+
+    // Показать подсказки
+    function showSuggestions(searchText) {
+        const suggestions = document.getElementById('suggestions');
+
+        if (searchText.length < 2) {
+            suggestions.style.display = 'none';
+            return;
+        }
+
+        const matches = allMarkers.filter(marker => {
+            return marker.objData.name.toLowerCase().includes(searchText);
+        });
+
+        if (matches.length === 0) {
+            suggestions.style.display = 'none';
+            return;
+        }
+
+        suggestions.innerHTML = '';
+        matches.slice(0, 10).forEach(marker => {
+            const objData = marker.objData;
+            const item = document.createElement('div');
+            item.className = 'suggestion-item';
+            item.textContent = objData.name;
+            item.onclick = () => {
+                document.getElementById('searchInput').value = objData.name;
+                suggestions.style.display = 'none';
+                filterObjects();
+            };
+            suggestions.appendChild(item);
+        });
+
+        suggestions.style.display = 'block';
+    }
+
+    // Загрузка данных с сервера
+    function fetchData() {
+        document.getElementById('statusText').textContent = 'Загрузка данных...';
+
+        fetch('{{ url_for("map.get_objects") }}')
+            .then(response => response.json())
+            .then(data => {
+                console.log('Данные получены:', data);
+
+                // Очищаем карту
+                clearMap();
+                allMarkers = [];
+                allLabels = [];
+
+                // Создаем метки для каждого объекта
+                data.forEach(obj => {
+                    const { marker, label } = createMarker(obj);
+                    allMarkers.push(marker);
+                    allLabels.push(label);
+                });
+
+                document.getElementById('statusText').textContent = `Загружено объектов: ${data.length}`;
+                applyCurrentFilter();
+            })
+            .catch(error => {
+                console.error('Ошибка загрузки данных:', error);
+                document.getElementById('statusText').textContent = 'Ошибка загрузки данных';
+            });
+    }
+
+    // Очистка карты
+    function clearMap() {
+        allMarkers.forEach(marker => {
+            if (map.hasLayer(marker)) {
+                map.removeLayer(marker);
+            }
+        });
+
+        allLabels.forEach(label => {
+            if (map.hasLayer(label)) {
+                map.removeLayer(label);
+            }
+        });
+    }
+
+    // Поиск по названию
+    function filterObjects() {
+        const searchText = document.getElementById('searchInput').value.toLowerCase().trim();
+        const resultsContainer = document.getElementById('resultsContainer');
+        const resultsList = document.getElementById('resultsList');
+
+        if (searchText === '') {
+            showAllObjects();
+            resultsContainer.style.display = 'none';
+            return;
+        }
+
+        clearMap();
+
+        let foundObjects = [];
+        let filteredMarkers = [];
+        let filteredLabels = [];
+
+        allMarkers.forEach((marker, index) => {
+            if (marker.objData.name.toLowerCase().includes(searchText)) {
+                filteredMarkers.push(marker);
+                filteredLabels.push(allLabels[index]);
+                foundObjects.push(marker.objData);
+            }
+        });
+
+        // Отображаем объекты
+        filteredMarkers.forEach(marker => {
+            marker.addTo(map);
+        });
+
+        // Добавляем подписи если включено
+        if (labelsVisible) {
+            filteredLabels.forEach(label => {
+                label.addTo(map);
+            });
+        }
+
+        // Показываем список результатов
+        if (foundObjects.length > 0) {
+            resultsList.innerHTML = '';
+            foundObjects.forEach(objData => {
+                const item = document.createElement('div');
+                item.className = 'result-item';
+                item.innerHTML = `
+                        ${objData.name}
+                        <span class="result-status ${objData.status === 'works' ? 'status-works' : 'status-broken'}">
+                            ${objData.status === 'works' ? '✓ Работает' : '✗ Не работает'}
+                        </span>
+                    `;
+                item.onclick = () => {
+                    map.setView([objData.lat, objData.lon], 16);
+                    // Находим и открываем popup соответствующей метки
+                    allMarkers.forEach(marker => {
+                        if (marker.objData.name === objData.name) {
+                            marker.openPopup();
+                        }
+                    });
+                };
+                resultsList.appendChild(item);
+            });
+            resultsContainer.style.display = 'block';
+        } else {
+            resultsContainer.style.display = 'none';
+        }
+
+        document.getElementById('statusText').textContent =
+            foundObjects.length > 0 ? `Найдено объектов: ${foundObjects.length}` : 'Объекты не найдены';
+
+        currentFilter = 'search';
+    }
+
+    // Показать все объекты
+    function showAllObjects() {
+        document.getElementById('searchInput').value = '';
+        document.getElementById('suggestions').style.display = 'none';
+        document.getElementById('resultsContainer').style.display = 'none';
+
+        clearMap();
+
+        // Отображаем все метки
+        allMarkers.forEach(marker => {
+            marker.addTo(map);
+        });
+
+        // Добавляем подписи если включено
+        if (labelsVisible) {
+            allLabels.forEach(label => {
+                label.addTo(map);
+            });
+        }
+
+        document.getElementById('statusText').textContent = `Все объекты: ${allMarkers.length}`;
+        currentFilter = 'all';
+    }
+
+    // Показать только рабочие
+    function showWorking() {
+        filterByStatus('works', 'Рабочие объекты');
+    }
+
+    // Показать только нерабочие
+    function showBroken() {
+        filterByStatus('broken', 'Нерабочие объекты');
+    }
+
+    // Фильтр по статусу
+    function filterByStatus(status, statusName) {
+        document.getElementById('resultsContainer').style.display = 'none';
+
+        clearMap();
+
+        let count = 0;
+        let filteredMarkers = [];
+        let filteredLabels = [];
+
+        allMarkers.forEach((marker, index) => {
+            if (marker.objData.status === status) {
+                filteredMarkers.push(marker);
+                filteredLabels.push(allLabels[index]);
+                count++;
+            }
+        });
+
+        // Отображаем объекты
+        filteredMarkers.forEach(marker => {
+            marker.addTo(map);
+        });
+
+        // Добавляем подписи если включено
+        if (labelsVisible) {
+            filteredLabels.forEach(label => {
+                label.addTo(map);
+            });
+        }
+
+        document.getElementById('statusText').textContent = `${statusName}: ${count}`;
+        currentFilter = status;
+    }
+
+    // Применить текущий фильтр после обновления данных
+    function applyCurrentFilter() {
+        switch (currentFilter) {
+            case 'works':
+                showWorking();
+                break;
+            case 'broken':
+                showBroken();
+                break;
+            case 'search':
+                filterObjects();
+                break;
+            default:
+                showAllObjects();
+        }
+    }
+
+    // Обработка ошибок
+    window.addEventListener('error', function(e) {
+        console.error('Global error:', e.error);
+    });
+</script>
+{% endblock %}

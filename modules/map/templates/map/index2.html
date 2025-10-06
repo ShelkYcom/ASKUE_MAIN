@@ -1,0 +1,107 @@
+﻿<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Оффлайн карта</title>
+
+    <!-- Локальный CSS MapLibre -->
+    <link rel="stylesheet" href="maplibre-gl.css" />
+
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+        }
+
+        #map {
+            position: absolute;
+            top: 0;
+            bottom: 0;
+            width: 100%;
+        }
+
+        .loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            z-index: 10;
+            background: white;
+            padding: 20px;
+            border-radius: 5px;
+            box-shadow: 0 0 10px rgba(0,0,0,0.3);
+        }
+    </style>
+</head>
+<body>
+    <div class="loading" id="loading">Загрузка карты...</div>
+    <div id="map"></div>
+
+    <!-- Локальный JS MapLibre -->
+    <script src="maplibre-gl.js"></script>
+    <script>
+        // Пробуем разные варианты URL
+        const POSSIBLE_URLS = [
+            'http://localhost:8080',
+            'http://192.168.51.139:8080',
+            'http://127.0.0.1:8080'
+        ];
+
+        // Центр карты: [долгота, широта] - Москва
+        const DEFAULT_CENTER = [37.6173, 55.7558];
+        const DEFAULT_ZOOM = 10;
+
+        let map;
+
+        function initMap(tileserverUrl) {
+            console.log('Пробуем подключиться к:', tileserverUrl);
+
+            try {
+                map = new maplibregl.Map({
+                    container: 'map',
+                    style: tileserverUrl + '/styles/basic-preview/style.json',
+                    center: DEFAULT_CENTER,
+                    zoom: DEFAULT_ZOOM,
+                    localIdeograph: true
+                });
+
+                map.addControl(new maplibregl.NavigationControl(), 'top-right');
+
+                map.on('load', () => {
+                    console.log('Карта успешно загружена!');
+                    document.getElementById('loading').style.display = 'none';
+                });
+
+                map.on('error', (e) => {
+                    console.error('Ошибка загрузки карты:', e);
+                    tryNextUrl(tileserverUrl);
+                });
+
+            } catch (error) {
+                console.error('Ошибка инициализации карты:', error);
+                tryNextUrl(tileserverUrl);
+            }
+        }
+
+        function tryNextUrl(failedUrl) {
+            const currentIndex = POSSIBLE_URLS.indexOf(failedUrl);
+            const nextIndex = currentIndex + 1;
+
+            if (nextIndex < POSSIBLE_URLS.length) {
+                console.log('Пробуем следующий URL:', POSSIBLE_URLS[nextIndex]);
+                initMap(POSSIBLE_URLS[nextIndex]);
+            } else {
+                document.getElementById('loading').innerHTML =
+                    'Не удалось загрузить карту. Проверьте:<br>' +
+                    '1. Запущен ли Docker контейнер<br>' +
+                    '2. Доступен ли TileServer по адресу: http://localhost:8080<br>' +
+                    '3. Открыта ли консоль для просмотра ошибок (F12)';
+            }
+        }
+
+        // Начинаем с первого URL
+        initMap(POSSIBLE_URLS[0]);
+    </script>
+</body>
+</html>

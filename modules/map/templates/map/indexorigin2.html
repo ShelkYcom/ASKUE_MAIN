@@ -1,0 +1,438 @@
+﻿{% extends "base.html" %}
+
+{% block title %}Карта объектов - {{ super() }}{% endblock %}
+
+{% block head %}
+{{ super() }}
+<!-- Подключаем локальные файлы MapLibre -->
+<script src="{{ url_for('static', filename='maplibre/maplibre-gl.js') }}"></script>
+<link href="{{ url_for('static', filename='maplibre/maplibre-gl.css') }}" rel='stylesheet' />
+{% endblock %}
+
+{% block content %}
+<div class="module-header">
+    <h1>Карта объектов организации</h1>
+    <p>Интерактивная карта с объектами и их статусами</p>
+</div>
+
+<div class="search-container">
+    <input type="text" id="searchInput" placeholder="Введите название объекта...">
+    <div id="suggestions"></div>
+    <button onclick="filterObjects()">Найти</button>
+    <button onclick="showAllObjects()">Показать все</button>
+    <button onclick="showWorking()">Только рабочие</button>
+    <button onclick="showBroken()">Только нерабочие</button>
+</div>
+
+<div class="status-info">
+    <span style="color: green;">●</span> Работает
+    <span style="color: red; margin-left: 15px;">●</span> Не работает
+    <span id="statusText" style="margin-left: 20px; font-weight: bold;"></span>
+</div>
+
+<div id="resultsContainer" class="results-list" style="display: none;">
+    <h3>Найденные объекты:</h3>
+    <div id="resultsList"></div>
+</div>
+
+<div id="map"></div>
+
+<script type="text/javascript">
+    // ⚠️ ЗАМЕНИ НА РЕАЛЬНЫЙ IP ТВОЕГО КОМПЬЮТЕРА!
+    const TILESERVER_URL = 'http://192.168.51.139:8080';
+
+    // Глобальные переменные
+    let map;
+    let allMarkers = [];
+    let currentFilter = 'all';
+    let objectsData = [];
+
+    // Проверка что MapLibre загружен
+    if (typeof maplibregl === 'undefined') {
+        console.error('MapLibre не загружен!');
+        document.getElementById('statusText').textContent = 'Ошибка: MapLibre не загружен';
+    } else {
+        console.log('MapLibre загружен, версия:', maplibregl.version);
+        initMap();
+    }
+
+    // Инициализация карты
+    function initMap() {
+        console.log('Инициализация MapLibre карты...');
+
+        // Используем векторный стиль из TileServer (как в твоем рабочем коде)
+        map = new maplibregl.Map({
+            container: 'map',
+            style: TILESERVER_URL + '/styles/basic/style.json',
+            center: [45.041080, 53.186031], // [lon, lat] - Новосибирск
+            zoom: 10,
+            localIdeograph: true // поддержка кириллицы
+        });
+
+        // Добавляем навигационные контролы
+        map.addControl(new maplibregl.NavigationControl(), 'top-right');
+
+        // Ждем загрузки карты
+        map.on('load', function() {
+            console.log('Карта MapLibre успешно загружена!');
+            document.getElementById('statusText').textContent = 'Карта загружена';
+            fetchData();
+
+            // Автообновление каждые 60 секунд
+            setInterval(fetchData, 60000);
+        });
+
+        // Обработка ошибок
+        map.on('error', function(e) {
+            console.error('Ошибка карты:', e);
+            document.getElementById('statusText').textContent = 'Ошибка загрузки карты: ' + e.error.message;
+        });
+
+        setupSearchHandlers();
+    }
+
+    // Настройка обработчиков поиска
+    function setupSearchHandlers() {
+        const searchInput = document.getElementById('searchInput');
+        const suggestions = document.getElementById('suggestions');
+
+        searchInput.addEventListener('input', function () {
+            const searchText = this.value.toLowerCase().trim();
+            showSuggestions(searchText);
+        });
+
+        document.addEventListener('click', function (e) {
+            if (!searchInput.contains(e.target) && !suggestions.contains(e.target)) {
+                suggestions.style.display = 'none';
+            }
+        });
+
+        searchInput.addEventListener('keypress', function (e) {
+            if (e.key === 'Enter') {
+                filterObjects();
+                suggestions.style.display = 'none';
+            }
+        });
+    }
+
+    // Показать подсказки
+    function showSuggestions(searchText) {
+        const suggestions = document.getElementById('suggestions');
+
+        if (searchText.length < 2) {
+            suggestions.style.display = 'none';
+            return;
+        }
+
+        const matches = objectsData.filter(obj =>
+            obj.name.toLowerCase().includes(searchText)
+        );
+
+        if (matches.length === 0) {
+            suggestions.style.display = 'none';
+            return;
+        }
+
+        suggestions.innerHTML = '';
+        matches.slice(0, 10).forEach(obj => {
+            const item = document.createElement('div');
+            item.className = 'suggestion-item';
+            item.textContent = obj.name;
+            item.onclick = () => {
+                document.getElementById('searchInput').value = obj.name;
+                suggestions.style.display = 'none';
+                filterObjects();
+                // Центрируем на найденном объекте
+                map.flyTo({
+                    center: [obj.lon, obj.lat],
+                    zoom: 16
+                });
+            };
+            suggestions.appendChild(item);
+        });
+
+        suggestions.style.display = 'block';
+    }
+
+    // Загрузка данных с сервера
+    function fetchData() {
+        document.getElementById('statusText').textContent = 'Загрузка данных...';
+
+        fetch('{{ url_for("map.get_objects") }}')
+            .then(response => {
+                if (!response.ok) {
+                    throw new Error('Ошибка сети');
+                }
+                return response.json();
+            })
+            .then(data => {
+                console.log('Данные получены:', data);
+                objectsData = data;
+
+                // Очищаем маркеры
+                clearAllMarkers();
+
+                // Создаем маркеры для каждого объекта
+                data.forEach(obj => {
+                    createMarker(obj);
+                });
+
+                document.getElementById('statusText').textContent = `Загружено объектов: ${data.length}`;
+                applyCurrentFilter();
+            })
+            .catch(error => {
+                console.error('Ошибка загрузки данных:', error);
+                document.getElementById('statusText').textContent = 'Ошибка загрузки данных';
+            });
+    }
+
+    // Очистка всех маркеров
+    function clearAllMarkers() {
+        allMarkers.forEach(marker => marker.remove());
+        allMarkers = [];
+    }
+
+    // Создание маркера с подписью
+    function createMarker(obj) {
+        // Создаем основной контейнер маркера
+        const el = document.createElement('div');
+        el.className = 'map-marker';
+
+        // Цвет в зависимости от статуса
+        const color = obj.status === 'works' ? '#28a745' : '#dc3545';
+        const borderColor = obj.status === 'works' ? '#1e7e34' : '#c82333';
+
+        // Иконка маркера
+        const markerIcon = document.createElement('div');
+        markerIcon.className = 'marker-icon';
+        markerIcon.style.width = '24px';
+        markerIcon.style.height = '24px';
+        markerIcon.style.backgroundColor = color;
+        markerIcon.style.border = `3px solid ${borderColor}`;
+        markerIcon.style.borderRadius = '50%';
+        markerIcon.style.boxShadow = '0 2px 6px rgba(0,0,0,0.3)';
+        markerIcon.style.cursor = 'pointer';
+        markerIcon.style.position = 'relative';
+
+        // Добавляем внутреннюю точку
+        const dot = document.createElement('div');
+        dot.style.width = '8px';
+        dot.style.height = '8px';
+        dot.style.backgroundColor = 'white';
+        dot.style.borderRadius = '50%';
+        dot.style.position = 'absolute';
+        dot.style.top = '50%';
+        dot.style.left = '50%';
+        dot.style.transform = 'translate(-50%, -50%)';
+        markerIcon.appendChild(dot);
+
+        // Создаем подпись
+        const label = document.createElement('div');
+        label.className = 'marker-label';
+        label.textContent = obj.name;
+        label.style.position = 'absolute';
+        label.style.top = '30px';
+        label.style.left = '50%';
+        label.style.transform = 'translateX(-50%)';
+        label.style.background = 'rgba(255,255,255,0.95)';
+        label.style.padding = '4px 8px';
+        label.style.borderRadius = '4px';
+        label.style.border = `2px solid ${color}`;
+        label.style.fontSize = '12px';
+        label.style.fontWeight = 'bold';
+        label.style.color = '#333';
+        label.style.whiteSpace = 'nowrap';
+        label.style.maxWidth = '150px';
+        label.style.overflow = 'hidden';
+        label.style.textOverflow = 'ellipsis';
+        label.style.zIndex = '1000';
+        label.style.boxShadow = '0 2px 4px rgba(0,0,0,0.2)';
+        label.style.pointerEvents = 'none';
+
+        el.appendChild(markerIcon);
+        el.appendChild(label);
+
+        // Создаем попап
+        const popup = new maplibregl.Popup({
+            offset: 25,
+            closeButton: true,
+            closeOnClick: false
+        }).setHTML(`
+            <div style="padding: 15px; min-width: 200px;">
+                <h3 style="margin: 0 0 10px 0; color: #333; border-bottom: 2px solid ${color}; padding-bottom: 5px;">
+                    ${obj.name}
+                </h3>
+                <div style="display: flex; align-items: center; margin-bottom: 8px;">
+                    <div style="width: 12px; height: 12px; border-radius: 50%; background: ${color}; margin-right: 8px;"></div>
+                    <strong>Статус:</strong>
+                    <span style="margin-left: 5px; color: ${obj.status === 'works' ? '#28a745' : '#dc3545'}; font-weight: bold;">
+                        ${obj.status === 'works' ? '✓ Работает' : '✗ Не работает'}
+                    </span>
+                </div>
+                <div style="font-size: 12px; color: #666;">
+                    <strong>Координаты:</strong><br>
+                    Ш: ${obj.lat.toFixed(6)}<br>
+                    Д: ${obj.lon.toFixed(6)}
+                </div>
+            </div>
+        `);
+
+        // Создаем маркер
+        const marker = new maplibregl.Marker({
+            element: el,
+            anchor: 'bottom'
+        })
+        .setLngLat([obj.lon, obj.lat])
+        .setPopup(popup)
+        .addTo(map);
+
+        // Добавляем обработчики событий для красивого hover
+        markerIcon.addEventListener('mouseenter', function() {
+            markerIcon.style.transform = 'scale(1.2)';
+            markerIcon.style.transition = 'transform 0.2s ease';
+            label.style.background = 'rgba(255,255,255,1)';
+            label.style.boxShadow = '0 4px 8px rgba(0,0,0,0.3)';
+        });
+
+        markerIcon.addEventListener('mouseleave', function() {
+            markerIcon.style.transform = 'scale(1)';
+            label.style.background = 'rgba(255,255,255,0.95)';
+            label.style.boxShadow = '0 2px 4px rgba(0,0,0,0.2)';
+        });
+
+        // Сохраняем данные объекта в маркер
+        marker._objectData = obj;
+        allMarkers.push(marker);
+    }
+
+    // Поиск по названию
+    function filterObjects() {
+        const searchText = document.getElementById('searchInput').value.toLowerCase().trim();
+        const resultsContainer = document.getElementById('resultsContainer');
+        const resultsList = document.getElementById('resultsList');
+
+        if (searchText === '') {
+            showAllObjects();
+            resultsContainer.style.display = 'none';
+            return;
+        }
+
+        // Скрываем все маркеры
+        clearAllMarkers();
+
+        let foundObjects = [];
+
+        objectsData.forEach(obj => {
+            if (obj.name.toLowerCase().includes(searchText)) {
+                createMarker(obj);
+                foundObjects.push(obj);
+            }
+        });
+
+        // Показываем список результатов
+        if (foundObjects.length > 0) {
+            resultsList.innerHTML = '';
+            foundObjects.forEach(obj => {
+                const item = document.createElement('div');
+                item.className = 'result-item';
+                item.innerHTML = `
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                        <span style="font-weight: bold;">${obj.name}</span>
+                        <span class="result-status ${obj.status === 'works' ? 'status-works' : 'status-broken'}">
+                            ${obj.status === 'works' ? '✓ Работает' : '✗ Не работает'}
+                        </span>
+                    </div>
+                `;
+                item.onclick = () => {
+                    // Центрируем карту на объекте
+                    map.flyTo({
+                        center: [obj.lon, obj.lat],
+                        zoom: 16,
+                        duration: 1000
+                    });
+                    // Открываем попап
+                    setTimeout(() => {
+                        allMarkers.forEach(marker => {
+                            if (marker._objectData.name === obj.name) {
+                                marker.togglePopup();
+                            }
+                        });
+                    }, 1100);
+                };
+                resultsList.appendChild(item);
+            });
+            resultsContainer.style.display = 'block';
+        } else {
+            resultsContainer.style.display = 'none';
+        }
+
+        document.getElementById('statusText').textContent =
+            foundObjects.length > 0 ? `Найдено объектов: ${foundObjects.length}` : 'Объекты не найдены';
+
+        currentFilter = 'search';
+    }
+
+    // Показать все объекты
+    function showAllObjects() {
+        document.getElementById('searchInput').value = '';
+        document.getElementById('suggestions').style.display = 'none';
+        document.getElementById('resultsContainer').style.display = 'none';
+
+        // Очищаем и пересоздаем все маркеры
+        clearAllMarkers();
+        objectsData.forEach(obj => {
+            createMarker(obj);
+        });
+
+        document.getElementById('statusText').textContent = `Все объекты: ${objectsData.length}`;
+        currentFilter = 'all';
+    }
+
+    // Показать только рабочие
+    function showWorking() {
+        filterByStatus('works', 'Рабочие объекты');
+    }
+
+    // Показать только нерабочие
+    function showBroken() {
+        filterByStatus('broken', 'Нерабочие объекты');
+    }
+
+    // Фильтр по статусу
+    function filterByStatus(status, statusName) {
+        document.getElementById('resultsContainer').style.display = 'none';
+
+        // Очищаем маркеры
+        clearAllMarkers();
+
+        let count = 0;
+
+        objectsData.forEach(obj => {
+            if (obj.status === status) {
+                createMarker(obj);
+                count++;
+            }
+        });
+
+        document.getElementById('statusText').textContent = `${statusName}: ${count}`;
+        currentFilter = status;
+    }
+
+    // Применить текущий фильтр после обновления данных
+    function applyCurrentFilter() {
+        switch (currentFilter) {
+            case 'works':
+                showWorking();
+                break;
+            case 'broken':
+                showBroken();
+                break;
+            case 'search':
+                filterObjects();
+                break;
+            default:
+                showAllObjects();
+        }
+    }
+</script>
+{% endblock %}
