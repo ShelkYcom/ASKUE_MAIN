@@ -27,11 +27,24 @@
   </PropertyGroup>
   <ItemGroup>
     <Content Include="ASKUE.html" />
+    <Content Include="map_test.html" />
+    <Content Include="modules\map\templates\map\index2.html" />
+    <Content Include="modules\map\templates\map\indexOrigin.html" />
     <Content Include="modules\map\templates\map\indexorigin2.html" />
     <Content Include="modules\map\templates\map\index.html" />
     <Content Include="modules\map\templates\map\index3.html" />
+    <Content Include="modules\map\templates\map\map\maplibre-gl.css" />
+    <Content Include="modules\map\templates\map\map\maplibre-gl.js" />
+    <Content Include="modules\map\__pycache__\routes.cpython-313.pyc" />
+    <Content Include="modules\map\__pycache__\__init__.cpython-313.pyc" />
     <Content Include="modules\requests\templates\requests\index.html" />
+    <Content Include="modules\requests\__pycache__\routes.cpython-313.pyc" />
+    <Content Include="modules\requests\__pycache__\__init__.cpython-313.pyc" />
+    <Content Include="start.bat" />
+    <Content Include="static\maplibre\maplibre-gl.css" />
+    <Content Include="static\maplibre\maplibre-gl.js" />
     <Content Include="static\style.css" />
+    <Content Include="statuses.xlsx" />
     <Content Include="templates\base.html" />
     <Content Include="templates\index.html" />
   </ItemGroup>
@@ -47,9 +60,17 @@
     <Folder Include="modules\map\" />
     <Folder Include="modules\map\templates\" />
     <Folder Include="modules\map\templates\map\" />
+    <Folder Include="modules\map\templates\map\map\" />
+    <Folder Include="modules\map\templates\map\map\map\" />
+    <Folder Include="modules\map\__pycache__\" />
     <Folder Include="modules\requests\" />
     <Folder Include="modules\requests\templates\" />
     <Folder Include="modules\requests\templates\requests\" />
+    <Folder Include="modules\requests\__pycache__\" />
+    <Folder Include="obj\" />
+    <Folder Include="obj\Any CPU\" />
+    <Folder Include="obj\Any CPU\Debug\" />
+    <Folder Include="obj\Debug\" />
     <Folder Include="static\" />
     <Folder Include="static\maplibre\" />
     <Folder Include="templates\" />
