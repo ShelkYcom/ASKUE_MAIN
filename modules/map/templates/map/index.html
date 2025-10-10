@@ -218,7 +218,9 @@
     </div>
 
     <script>
-        const TILESERVER_URL = 'http://192.168.51.139:8080';
+        const TILESERVER_PORT = 8080;
+        const STYLE_PATH = '/styles/basic-preview/style.json';
+        let TILESERVER_URL = null;
 
         let map;
         let allMarkers = [];
@@ -242,6 +244,53 @@
                 bounds: [[45.031824, 53.167076], [45.074378, 53.198532]]
             }
         ];
+
+        function buildTileserverCandidates() {
+            const protocol = window.location.protocol === 'https:' ? 'https:' : 'http:';
+            const fallbackProtocol = protocol === 'https:' ? 'http:' : null;
+            const hostnames = [];
+
+            if (window.location.hostname) {
+                hostnames.push(window.location.hostname);
+            }
+
+            ['localhost', '127.0.0.1'].forEach((host) => {
+                if (!hostnames.includes(host)) {
+                    hostnames.push(host);
+                }
+            });
+
+            const candidates = new Set();
+
+            hostnames.forEach((host) => {
+                candidates.add(`${protocol}//${host}:${TILESERVER_PORT}`);
+                if (fallbackProtocol) {
+                    candidates.add(`${fallbackProtocol}//${host}:${TILESERVER_PORT}`);
+                }
+            });
+
+            return Array.from(candidates);
+        }
+
+        async function detectTileserverUrl() {
+            const candidates = buildTileserverCandidates();
+            console.log('Пробуем подключиться к TileServer по адресам:', candidates);
+
+            for (const url of candidates) {
+                try {
+                    const response = await fetch(url + STYLE_PATH, { cache: 'no-store' });
+                    if (response.ok) {
+                        console.log('Используем картографический сервер:', url);
+                        return url;
+                    }
+                } catch (error) {
+                    console.warn(`TileServer не доступен по адресу ${url}`, error);
+                }
+            }
+
+            throw new Error('TileServer не найден ни по одному из адресов');
+        }
+
 
         function initMap() {
             map = new maplibregl.Map({
@@ -271,6 +320,24 @@
                 updateStats();
                 updateDistrictMarkers();
             });
+
+            map.on('error', (event) => {
+                console.error('Ошибка загрузки карты:', event.error || event);
+                document.getElementById('statusText').textContent = 'Ошибка загрузки карты';
+            });
+        }
+
+        async function startMap() {
+            const statusElement = document.getElementById('statusText');
+            statusElement.textContent = 'Подключение к картографическому серверу...';
+
+            try {
+                TILESERVER_URL = await detectTileserverUrl();
+                initMap();
+            } catch (error) {
+                console.error('Не удалось подключиться к TileServer:', error);
+                statusElement.textContent = 'Не удалось подключиться к картографическому серверу';
+            }
         }
 
         function loadObjects() {
@@ -290,6 +357,9 @@
                     document.getElementById('statusText').textContent = 'Ошибка загрузки данных';
                 });
         }
+
+        startMap();
+
 
         function setupSearch() {
             const searchInput = document.getElementById('searchInput');
