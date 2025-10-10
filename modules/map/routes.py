@@ -1,16 +1,25 @@
 ﻿from flask import Blueprint, render_template, jsonify
-import pandas as pd
 import os
+import sqlite3  # <-- добавили
 
 map_bp = Blueprint('map', __name__, url_prefix='/map', template_folder='templates')
 
-EXCEL_FILE_PATH = 'statuses.xlsx'
+# Путь к БД (../.. от этого файла -> корень проекта -> data/app.sqlite)
+DB_PATH = os.path.join(os.path.dirname(__file__), '..', '..', 'data', 'app.sqlite')
+DB_PATH = os.path.normpath(DB_PATH)
 
-def load_data_from_excel():
-    if not os.path.exists(EXCEL_FILE_PATH):
+def load_data_from_sqlite():
+    if not os.path.exists(DB_PATH):
         return []
-    df = pd.read_excel(EXCEL_FILE_PATH)
-    return df.to_dict('records')
+    con = sqlite3.connect(DB_PATH)
+    con.row_factory = sqlite3.Row
+    cur = con.execute("""
+        SELECT id, name, lat, lon, status
+        FROM points
+    """)
+    rows = [dict(r) for r in cur.fetchall()]
+    con.close()
+    return rows
 
 @map_bp.route('/')
 def index():
@@ -18,5 +27,5 @@ def index():
 
 @map_bp.route('/api/objects')
 def get_objects():
-    data = load_data_from_excel()
+    data = load_data_from_sqlite()   # <-- теперь из SQLite
     return jsonify(data)
