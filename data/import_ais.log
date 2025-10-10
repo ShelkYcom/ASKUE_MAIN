@@ -1,0 +1,6 @@
+===== RUN 10.10.2025 10:45:03,86 ===== 
+C:\OSPanel\bin\sqlite3.exe
+[INFO] Using sqlite3: C:\OSPanel\bin\sqlite3.exe 
+[INFO] DB: .\app.sqlite 
+[INFO] INPUT: C:\GitHub\data\¢ë£àã§ª €ˆ‘.xls 
+[ERROR] Excel- conversion failed. 
